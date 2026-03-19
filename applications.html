@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <title>Заявки - StageUp</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        .app-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            margin-bottom: 16px;
+            box-shadow: var(--shadow-sm);
+        }
+        .app-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 16px;
+        }
+        .app-letter {
+            background: var(--surface2);
+            padding: 16px;
+            border-radius: var(--radius-sm);
+            font-size: 15px;
+            color: var(--text);
+            line-height: 1.6;
+            margin-bottom: 20px;
+            white-space: pre-wrap;
+        }
+        /* Статусы */
+        .status-badge { padding: 4px 10px; border-radius: 50px; font-size: 12px; font-weight: 700; }
+        .status-PENDING { background: var(--bg-secondary); color: var(--text-2); }
+        .status-APPROVED { background: rgba(0, 168, 112, 0.15); color: var(--success); }
+        .status-REJECTED { background: var(--danger-soft); color: var(--danger); }
+    </style>
+</head>
+<body>
+<header class="header"><!-- Скопируй шапку из organizer.html --></header>
+
+<main class="main" style="padding-top: 40px;">
+    <div class="container" style="max-width: 800px;">
+
+        <div style="margin-bottom: 24px;">
+            <a href="organizer.html" style="color: var(--text-3); font-weight: 600; font-size: 14px;">← Назад к мероприятиям</a>
+            <h1 style="margin: 12px 0 0; font-size: 28px;">Заявки на выступление</h1>
+        </div>
+
+        <div id="appsLoading" class="state-container"><div class="spinner"></div><p>Загрузка заявок...</p></div>
+        <div id="appsEmpty" class="state-container" style="display:none;">
+            <p style="color: var(--text-3);">Пока нет ни одной заявки.</p>
+        </div>
+
+        <div id="appsList">
+            <!-- Сюда упадут карточки заявок -->
+        </div>
+
+    </div>
+</main>
+<script src="script.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        initAuthState();
+        loadApplications();
+    });
+</script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <title>Редактировать мероприятие - StageUp</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="header"><!-- Скопируй сюда шапку из organizer.html --></header>
+
+<main class="main" style="padding-top: 60px;">
+    <div class="container" style="max-width: 800px;">
+        <h1 style="font-size: 32px; margin-bottom: 30px;">Редактировать мероприятие</h1>
+
+        <div id="loadingForm" class="state-container"><div class="spinner"></div><p>Загрузка данных...</p></div>
+
+        <div class="event-card" id="editForm" style="padding: 30px; display: none;">
+            <div class="form-group"><label>Название</label><input type="text" id="evTitle"></div>
+            <div class="form-group"><label>Жанр</label><input type="text" id="evGenre"></div>
+            <div class="form-group"><label>Описание</label><textarea id="evDesc" rows="3" style="width:100%; padding:12px; border: 1.5px solid var(--border); border-radius:8px; background:var(--surface2); color:var(--text);"></textarea></div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
+                <div class="form-group"><label>Город</label><input type="text" id="evCity"></div>
+                <div class="form-group"><label>Место</label><input type="text" id="evLocation"></div>
+                <div class="form-group"><label>Адрес</label><input type="text" id="evAddress"></div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
+                <div class="form-group"><label>Дата</label><input type="date" id="evDate"></div>
+                <div class="form-group"><label>Начало</label><input type="time" id="evStartTime"></div>
+                <div class="form-group"><label>Окончание</label><input type="time" id="evEndTime"></div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div class="form-group">
+                    <label>Оплата</label>
+                    <select id="evRewardType" style="width:100%; padding:12px; border: 1.5px solid var(--border); border-radius:8px; background:var(--surface2);">
+                        <option value="BY_AGREEMENT">По договоренности</option>
+                        <option value="FIXED_FEE">Фиксированная оплата</option>
+                        <option value="FREE">Бесплатно</option>
+                    </select>
+                </div>
+                <div class="form-group"><label>Сумма (₽)</label><input type="number" id="evFee"></div>
+            </div>
+
+            <button class="btn-modal" onclick="submitEditEvent()">Сохранить изменения</button>
+        </div>
+    </div>
+</main>
+<script src="script.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        initAuthState();
+        loadEventForEdit(); // Загружаем данные при открытии
+    });
+</script>
+</body>
+</html>
