@@ -1036,13 +1036,20 @@ async function loadApplications(page = 0) {
             const d = new Date(app.applicationDate);
             const dateStr = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute:'2-digit' }).format(d);
 
+            // 1. ОПРЕДЕЛЯЕМ ПЕРЕМЕННУЮ ЗДЕСЬ
+            const targetId = app.artistUserId || app.artistId || app.userId || app.id;
+
+            const profileLink = targetId ? `profile.html#${targetId}` : '#';
             const artistName = app.artistName || 'Неизвестный артист';
 
             return `
                 <div class="app-card">
                     <div class="app-header">
                         <div>
-                            <h3 style="margin:0 0 4px; font-size:18px;">${escapeHtml(artistName)}</h3>
+                            <!-- 2. ИСПОЛЬЗУЕМ profileLink -->
+                            <a href="${profileLink}" class="artist-link" style="text-decoration:none; color:var(--text)">
+                                <h3 style="margin:0 0 4px; font-size:18px;">${escapeHtml(artistName)}</h3>
+                            </a>
                             <span style="color:var(--text-3); font-size:13px;">Отправлено: ${dateStr}</span>
                         </div>
                         <span class="status-badge status-${app.status}">
@@ -1054,13 +1061,12 @@ async function loadApplications(page = 0) {
                         ${escapeHtml(app.coverLetter)}
                     </div>
 
-                    <!-- Кнопки решения (показываем только если заявка PENDING) -->
-                ${app.status === 'PENDING' ? `
-                    <div style="display:flex; gap:12px;">
-                        <button class="btn-modal" style="flex:1; padding:10px;" onclick="changeAppStatus('${app.id}', 'APPROVED')">Принять</button>
-                        <button class="btn-outline" style="flex:1; padding:10px; border-color:var(--danger); color:var(--danger);" onclick="changeAppStatus('${app.id}', 'REJECTED')">Отклонить</button>
-                    </div>
-                ` : ''}
+                    ${app.status === 'PENDING' ? `
+                        <div style="display:flex; gap:12px;">
+                            <button class="btn-modal" style="flex:1; padding:10px;" onclick="changeAppStatus('${app.id}', 'APPROVED')">Принять</button>
+                            <button class="btn-outline" style="flex:1; padding:10px; border-color:var(--danger); color:var(--danger);" onclick="changeAppStatus('${app.id}', 'REJECTED')">Отклонить</button>
+                        </div>
+                    ` : ''}
                 </div>
             `;
         }).join('');
@@ -1068,13 +1074,13 @@ async function loadApplications(page = 0) {
     } catch (e) {
         $('appsLoading').style.display = 'none';
         appsList.innerHTML = '<p style="color:var(--danger);">Ошибка при загрузке заявок.</p>';
+        appsList.innerHTML = `
+            <div style="color:var(--danger); padding:20px; text-align:center;">
+                <p>Не удалось загрузить заявки.</p>
+                <p style="font-size:12px">Детали: ${e.message}</p>
+            </div>
+        `;
     }
-}
-
-// Заглушка для смены статуса
-async function changeAppStatus(applicationId, newStatus) {
-    alert(`Тут будет запрос на смену статуса заявки ${applicationId} на ${newStatus}. Пока бэкенд для этого не написан!`);
-    // После успешного запроса на бэкенд нужно вызвать loadApplications(0) чтобы обновить список
 }
 
 
@@ -1108,3 +1114,46 @@ async function changeAppStatus(applicationId, newStatus) {
         alert('Ошибка соединения с сервером');
     }
 }
+
+async function loadPublicProfile(targetId) {
+    console.log("1. Пытаемся загрузить чужой профиль с ID:", targetId);
+    document.getElementById('pageContent').innerHTML = renderSkeleton();
+
+    try {
+        const headers = getToken() ? authHeaders() : { 'Content-Type': 'application/json' };
+        const url = `${API}/artist/${targetId}`;
+
+        console.log("2. Делаем GET запрос на URL:", url);
+        const res = await fetch(url, { headers });
+        console.log("3. Ответ сервера (статус):", res.status);
+
+        if (res.ok) {
+            const artist = await res.json();
+            console.log("4. Данные артиста с бэкенда:", artist);
+            // Рисуем чужой профиль
+            document.getElementById('pageContent').innerHTML = renderArtistPage(artist, false, true);
+            return;
+        }
+
+        // Если пришла ошибка 403, 404 и т.д.
+        const errorText = await res.text();
+        console.error("Ошибка от сервера:", res.status, errorText);
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="card" style="text-align: center; padding: 60px 20px;">
+                <h2 style="color: var(--danger)">Ошибка ${res.status}</h2>
+                <p style="color: var(--text-2); margin-top: 10px;">Сервер не отдал профиль. Проверь консоль (F12).</p>
+            </div>
+        `;
+    } catch (e) {
+        console.error("Критическая ошибка JS:", e);
+        document.getElementById('pageContent').innerHTML = `
+            <div class="card" style="text-align: center; padding: 60px 20px;">
+                <h2 style="color: var(--danger)">Ошибка на фронтенде</h2>
+                <p style="color: var(--text-2); margin-top: 10px;">${e.message}</p>
+            </div>
+        `;
+    }
+}
+
+

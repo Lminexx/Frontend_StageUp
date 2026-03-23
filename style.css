@@ -678,3 +678,14 @@ a { text-decoration: none; color: inherit; }
     color: var(--accent);
     background: var(--accent-soft);
 }
+ .artist-link {
+     display: inline-block;
+     transition: transform 0.1s ease;
+ }
+.artist-link:hover h3 {
+    color: var(--accent);
+    text-decoration: underline;
+}
+.artist-link:active {
+    transform: scale(0.98);
+}

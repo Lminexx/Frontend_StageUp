@@ -306,22 +306,51 @@
        BOOTSTRAP
     ════════════════════════════════ */
     const token = getToken();
-    if (!token) window.location.href = 'index.html';
+    // Получаем всё, что идет после '#'. Если решетки нет, будет пустая строка ''
+    const hash = window.location.hash.substring(1);
+    const targetUserId = hash ? hash : null;
 
-    const jwt    = decodeJWT(token);
-    const role   = (jwt?.role || jwt?.roles?.[0] || '').toUpperCase();
-    const userId = jwt?.sub || jwt?.userId || jwt?.id || null;
+    if (hash) {
+        loadPublicProfile(hash); // Вызываем функцию для чужого профиля
+    }
+    else if (token) {
+        const jwt = decodeJWT(token);
+        const role = (jwt?.role || jwt?.roles?.[0] || '').toUpperCase();
 
-    if      (role === 'ARTIST')    loadArtistProfile();
-    else if (role === 'ORGANIZER') loadOrganizerProfile();
+        if (role === 'ARTIST') {
+            loadArtistProfile(); // Загрузит редактируемый профиль артиста
+        } else if (role === 'ORGANIZER') {
+            loadOrganizerProfile(); // Загрузит редактируемый профиль организатора
+        } else {
+            document.getElementById('pageContent').innerHTML = `<p>Ошибка: Неизвестная роль.</p>`;
+        }
+    }
+// СЦЕНАРИЙ 3: Нет ни токена, ни ссылки (Гость зашел по прямой ссылке)
     else {
-        document.getElementById('pageContent').innerHTML =
-            `<div style="text-align:center;padding:80px 24px;color:var(--text-3)">
-            <div style="font-size:40px;margin-bottom:16px">🤔</div>
-            <p>Не удалось определить роль.<br>Попробуйте войти заново.</p>
-         </div>`;
+        window.location.href = 'index.html';
     }
 
+    // 1. Если есть ID в ссылке — мы в режиме "Просмотр чужого профиля"
+    if (targetUserId) {
+        // Проверяем, на кого перешли (артист или организатор)
+        // Если у тебя нет эндпоинта /api/v1/user/role/{id},
+        // можно сначала дернуть один запрос, чтобы понять роль
+        loadPublicProfile(targetUserId);
+    }
+    // 2. Если ID в ссылке нет — режим "Личный кабинет" (требуем токен)
+    else if (token) {
+        const jwt    = decodeJWT(token);
+        const role   = (jwt?.role || jwt?.roles?.[0] || '').toUpperCase();
+        const userId = jwt?.sub || jwt?.userId || jwt?.id || null;
+
+        if      (role === 'ARTIST')    loadArtistProfile(userId);
+        else if (role === 'ORGANIZER') loadOrganizerProfile(userId);
+        else {
+            document.getElementById('pageContent').innerHTML = `<p>Неизвестная роль.</p>`;
+        }
+    } else {
+        window.location.href = 'index.html'; // Гостей без ID в ссылке выкидываем
+    }
     /* ════════════════════════════════
        ARTIST — LOAD
     ════════════════════════════════ */
@@ -329,38 +358,76 @@
     // Флаг: существует ли профиль на бэке
     let artistExists = false;
 
-    async function loadArtistProfile() {
+    // В самом верху скрипта создай переменную для хранения того, чей профиль мы смотрим
+    let currentProfileId = null;
+
+    async function loadArtistProfile(targetId = null) {
         document.getElementById('pageContent').innerHTML = renderSkeleton();
+
+        // Если передан targetId — мы в режиме просмотра чужого (или своего по ID)
+        // Если targetId null — мы в режиме "Личный кабинет" (запрашиваем свой)
+        const isPublicMode = !!targetId;
+
+        // Выбираем правильный URL
+        const url = isPublicMode ? `${API}/artist/${targetId}` : `${API}/artist/profile`;
+
+        // Для "своего" профиля нужны authHeaders, для чужого — нет (если бэк позволяет)
+        const headers = isPublicMode ? { 'Content-Type': 'application/json' } : authHeaders();
 
         let artist = {};
         try {
-            const res = await fetch(`${API}/artist/profile`, { headers: authHeaders() });
+            const res = await fetch(url, { headers });
             if (res.ok) {
                 artist = await res.json();
-                artistExists = true;        // профиль уже есть → будем делать PUT
+                // В режиме просмотра нельзя редактировать
+                artistExists = !isPublicMode;
+
+                // --- НОВЫЙ КОД: ПОЛУЧАЕМ АВАТАР ---
+                let currentUserId = targetId; // Если смотрим чужой
+                if (!isPublicMode) {
+                    // Если смотрим свой, достаем ID из токена
+                    const jwt = decodeJWT(getToken());
+                    currentUserId = jwt?.sub || jwt?.userId || jwt?.id;
+                }
+
+                if (currentUserId) {
+                    const avatarUrl = await fetchAvatar(currentUserId);
+                    if (avatarUrl) {
+                        artist.profilePictureUrl = avatarUrl; // Подменяем URL для рендера
+                    }
+                }
+                // -----------------------------------
+
             } else if (res.status === 404) {
-                artistExists = false;       // профиля нет → при сохранении делаем POST
+                artistExists = false;
             }
-        } catch {}
+        } catch (e) { console.error(e); }
 
-        document.getElementById('pageContent').innerHTML = renderArtistPage(artist, !artistExists);
-        initTabs();
-        initArtistForm(artist);
-        animateRepBar(artist.reputationScore || 0);
+        // Рендерим страницу
+        document.getElementById('pageContent').innerHTML = renderArtistPage(artist, !artistExists, isPublicMode);
 
-        // Если профиль новый — сразу открываем вкладку редактирования
-        if (!artistExists) switchTab('edit');
+        // Инициализируем табы только если мы не в режиме "только просмотр"
+        if (!isPublicMode) {
+            initTabs();
+            initArtistForm(artist);
+            animateRepBar(artist.reputationScore || 0);
+            if (!artistExists) switchTab('edit');
+        }
     }
 
     /* ════════════════════════════════
        ARTIST — RENDER
     ════════════════════════════════ */
-    function renderArtistPage(a, isNew) {
-        const name = a.displayName || jwt?.sub || 'Артист';
+    function renderArtistPage(a, isNew, isViewOnly = false) {
+        // Если смотрим чужой профиль — не берем свой email из токена!
+        let name = a.displayName;
+        if (!name) {
+            name = isViewOnly ? 'Неизвестный артист' : (typeof jwt !== 'undefined' ? jwt?.sub : 'Артист');
+        }
         const rep  = parseFloat(a.reputationScore || 0).toFixed(1);
 
         return `
-    ${isNew ? `
+    ${!isViewOnly && isNew ? `
     <div class="new-profile-banner">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         Профиль ещё не заполнен. Заполните данные и нажмите «Сохранить» — мы создадим ваш профиль артиста.
@@ -382,10 +449,11 @@
         </div>
     </div>
 
+    ${!isViewOnly ? `
     <div class="tabs">
         <button class="tab-btn active" data-tab="view">Профиль</button>
         <button class="tab-btn" data-tab="edit">${isNew ? '✏️ Заполнить профиль' : 'Редактировать'}</button>
-    </div>
+    </div>` : ''}
 
     <!-- VIEW -->
     <div class="tab-panel active" id="tab-view">
@@ -421,6 +489,7 @@
         </div>
     </div>
 
+    ${!isViewOnly ? `
     <!-- EDIT -->
     <div class="tab-panel" id="tab-edit">
         <div class="card">
@@ -431,7 +500,10 @@
                 <div class="form-group-p"><label>Город</label><input class="p-input" type="text" id="f_city" placeholder="Москва" value="${esc(a.city||'')}"></div>
                 <div class="form-group-p"><label>Телефон</label><input class="p-input" type="tel" id="f_contactPhone" placeholder="+7 999 000 00 00" value="${esc(a.contactPhone||'')}"></div>
                 <div class="form-group-p"><label>Email для связи</label><input class="p-input" type="email" id="f_contactEmail" placeholder="you@example.com" value="${esc(a.contactEmail||'')}"></div>
-                <div class="form-group-p"><label>Фото профиля (URL)</label><input class="p-input" type="url" id="f_profilePictureUrl" placeholder="https://..." value="${esc(a.profilePictureUrl||'')}"></div>
+                <div class="form-group-p">
+                    <label>Фото профиля</label>
+                    <input class="p-input" type="file" id="f_avatarInput" accept="image/*">
+                </div>
                 <div class="form-group-p span-2"><label>О себе</label><textarea class="p-input" id="f_description" placeholder="Расскажите о себе…">${esc(a.description||'')}</textarea></div>
             </div>
 
@@ -459,7 +531,7 @@
                 </button>
             </div>
         </div>
-    </div>`;
+    </div>` : ''}`;
     }
 
     function initArtistForm(a) {
@@ -475,26 +547,35 @@
         const btn = document.getElementById('saveArtistBtn');
         const isNew = !artistExists;
 
+        // 1. Получаем userId из токена прямо здесь
+        const jwt = decodeJWT(getToken());
+        const userId = jwt?.sub || jwt?.userId || jwt?.id;
+
+        if (!userId) {
+            showToast("Ошибка авторизации. Войдите заново.", "error");
+            return;
+        }
+
         btn.innerHTML = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg> ${isNew ? 'Создаём…' : 'Сохраняем…'}`;
         btn.classList.add('loading');
 
-        // Тело запроса — одинаковое для POST и PUT
+        // 2. Собираем тело запроса
         const body = {
-            userId,
+            userId: userId, // Используем полученный ID
             displayName:       document.getElementById('f_displayName').value.trim()       || null,
             genre:             document.getElementById('f_genre').value.trim()             || null,
             city:              document.getElementById('f_city').value.trim()              || null,
             description:       document.getElementById('f_description').value.trim()       || null,
             contactPhone:      document.getElementById('f_contactPhone').value.trim()      || null,
             contactEmail:      document.getElementById('f_contactEmail').value.trim()      || null,
-            profilePictureUrl: document.getElementById('f_profilePictureUrl').value.trim() || null,
-            reputationScore:   null,   // только бэк управляет
+            // Сюда НЕ пишем f_profilePictureUrl, так как этого поля больше нет
+            profilePictureUrl: null,
+            reputationScore:   null,
             videoSamples:      getListValues('videoList'),
             audioSamples:      getListValues('audioList'),
             socialLinks:       getSocialValues(),
         };
 
-        // POST — создание, PUT — обновление
         const url    = isNew ? `${API}/artist/create` : `${API}/artist/profile`;
         const method = isNew ? 'POST' : 'PUT';
 
@@ -502,14 +583,17 @@
             const res = await fetch(url, { method, headers: authHeaders(), body: JSON.stringify(body) });
 
             if (res.ok) {
-                artistExists = true;   // теперь профиль точно есть
+                // 3. ЕСЛИ СОХРАНЕНИЕ ПРОШЛО УСПЕШНО — ГРУЗИМ ФАЙЛ
+                await uploadAvatarFile(userId);
+
+                artistExists = true;
                 showToast(isNew ? 'Профиль создан! 🎉' : 'Профиль сохранён!', 'success');
                 setTimeout(() => loadArtistProfile(), 600);
             } else {
                 const e = await res.json().catch(() => ({}));
                 showToast(e?.detail || e?.message || 'Ошибка сохранения', 'error');
             }
-        } catch {
+        } catch (e) {
             showToast('Ошибка сети. Попробуйте позже.', 'error');
         } finally {
             btn.innerHTML = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> ${isNew ? 'Создать профиль' : 'Сохранить'}`;
@@ -713,6 +797,138 @@
         <div class="skeleton" style="height:180px;border-radius:8px"></div>
     </div>`;
     }
+
+    async function loadPublicProfile(targetId) {
+        console.log("1. Пытаемся загрузить чужой профиль с ID:", targetId);
+        document.getElementById('pageContent').innerHTML = renderSkeleton();
+
+        try {
+            const headers = getToken() ? authHeaders() : { 'Content-Type': 'application/json' };
+            const url = `${API}/artist/${targetId}`;
+
+            console.log("2. Делаем GET запрос на URL:", url);
+            const res = await fetch(url, { headers });
+            console.log("3. Ответ сервера (статус):", res.status);
+
+            if (res.ok) {
+                const artist = await res.json();
+                console.log("4. Данные артиста с бэкенда:", artist);
+
+                // --- НОВЫЙ КОД: ПОЛУЧАЕМ АВАТАР ДЛЯ ЧУЖОГО ПРОФИЛЯ ---
+                const avatarUrl = await fetchAvatar(targetId);
+                if (avatarUrl) {
+                    artist.profilePictureUrl = avatarUrl;
+                }
+                // ----------------------------------------------------
+
+                // Рисуем чужой профиль (isViewOnly = true)
+                document.getElementById('pageContent').innerHTML = renderArtistPage(artist, false, true);
+                return;
+            }
+
+            // Если пришла ошибка 403, 404 и т.д.
+            const errorText = await res.text();
+            console.error("Ошибка от сервера:", res.status, errorText);
+
+            document.getElementById('pageContent').innerHTML = `
+            <div class="card" style="text-align: center; padding: 60px 20px;">
+                <h2 style="color: var(--danger)">Ошибка ${res.status}</h2>
+                <p style="color: var(--text-2); margin-top: 10px;">Сервер не отдал профиль. Проверь консоль.</p>
+            </div>
+        `;
+        } catch (e) {
+            console.error("Критическая ошибка JS:", e);
+            document.getElementById('pageContent').innerHTML = `
+            <div class="card" style="text-align: center; padding: 60px 20px;">
+                <h2 style="color: var(--danger)">Ошибка на фронтенде</h2>
+                <p style="color: var(--text-2); margin-top: 10px;">${e.message}</p>
+            </div>
+        `;
+        }
+    }
+
+    async function uploadAvatarFile(userId) {
+        console.log("=== НАЧАЛО ЗАГРУЗКИ АВАТАРА ДЛЯ ID:", userId, "===");
+        const fileInput = document.getElementById('f_avatarInput');
+
+        if (!fileInput || !fileInput.files[0]) {
+            console.log("Файл не выбран, пропускаем.");
+            return;
+        }
+
+        const file = fileInput.files[0];
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const res = await fetch(`${API}/artist/uploadAvatar`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${getToken()}`,
+                    'X-User-Id': userId
+                },
+                body: formData
+            });
+
+            if (res.ok) {
+                console.log("✅ Аватар успешно загружен в MinIO через Gateway!");
+            } else {
+                const errText = await res.text();
+                console.error("❌ Ошибка загрузки аватара. Статус:", res.status, errText);
+            }
+        } catch (e) {
+            console.error("❌ Критическая ошибка сети при загрузке аватара:", e);
+        }
+    }
+
+    async function fetchAvatar(userId) {
+        if (!userId) return null;
+
+        try {
+            const headers = {
+                'X-User-Id': userId
+            };
+
+            // Добавляем токен, если пользователь авторизован
+            const token = getToken();
+            if (token) {
+                headers['Authorization'] = `Bearer ${token}`;
+            }
+
+            const res = await fetch(`${API}/artist/avatar`, {
+                method: 'GET',
+                headers: headers
+            });
+            if (res.ok) {
+                const data = await res.json();
+                // ВАЖНО: Убедись, что поле совпадает с твоим AvatarDTO в Java!
+                // Обычно это data.url, data.fileUrl или data.profilePictureUrl
+                const safeUrl = encodeURI(data.avatarUrl);
+                console.log("DEBUG: Полная ссылка на картинку:", safeUrl);
+                return safeUrl
+            }
+        } catch (e) {
+            console.error("Не удалось получить аватарку:", e);
+        }
+        return null;
+    }
+
+    document.addEventListener('change', function(e) {
+        if (e.target && e.target.id === 'f_avatarInput') {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(evt) {
+                    // Находим кружок с аватаркой и заменяем его содержимое на выбранную картинку
+                    const avatarDiv = document.querySelector('.avatar');
+                    if (avatarDiv) {
+                        avatarDiv.innerHTML = `<img src="${evt.target.result}" alt="avatar">`;
+                    }
+                }
+                reader.readAsDataURL(file);
+            }
+        }
+    });
 </script>
 </body>
 </html>
