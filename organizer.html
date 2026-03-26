@@ -46,6 +46,18 @@
     </div>
 </main>
 
+<!-- Модальное окно удаления -->
+<div id="deleteModal" class="modal-overlay">
+    <div class="modal" style="text-align: center;">
+        <h3 style="color: #ff4d4f; margin-bottom: 10px;">Удалить мероприятие?</h3>
+        <p style="color: var(--text-3); font-size: 14px;">Вы уверены? Это действие нельзя отменить, и все заявки могут быть потеряны.</p>
+        <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px;">
+            <button class="btn-secondary" onclick="closeDeleteModal()">Отмена</button>
+            <button class="btn-primary" style="background: #ff4d4f; border-color: #ff4d4f;" id="confirmDeleteBtn" onclick="executeDelete()">Да, удалить</button>
+        </div>
+    </div>
+</div>
+
 <script src="script.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', () => {

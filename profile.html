@@ -299,6 +299,7 @@
 
     function handleLogout() {
         localStorage.removeItem('token');
+        localStorage.removeItem('userAvatar');
         window.location.href = 'index.html';
     }
 
@@ -390,10 +391,53 @@
                     currentUserId = jwt?.sub || jwt?.userId || jwt?.id;
                 }
 
-                if (currentUserId) {
+                if (currentUserId) {/* ════════════════════════════════
+   GLOBAL AVATAR В МЕНЮ ШАПКИ
+════════════════════════════════ */
+
+// 1. Функция, которая вставляет картинку в кружок в меню
+                    function renderHeaderAvatar(url) {
+                        const avatarDiv = document.getElementById('userAvatar');
+                        if (!avatarDiv) return; // Если на странице нет меню, ничего не делаем
+
+                        if (url) {
+                            // Ставим картинку. width: 100% и height: 100% заполнят твой div.user-avatar
+                            avatarDiv.innerHTML = `<img src="${url}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+                        } else {
+                            avatarDiv.innerHTML = '🎤'; // Дефолт, если фотки нет
+                        }
+                    }
+
+// 2. Логика, которая запускается при открытии ЛЮБОЙ страницы
+                    document.addEventListener('DOMContentLoaded', async () => {
+                        const token = getToken();
+                        if (!token) return; // Если гость - выходим
+
+                        // Ищем аватарку в памяти браузера
+                        const cachedAvatar = localStorage.getItem('userAvatar');
+
+                        if (cachedAvatar) {
+                            // Если нашли — сразу рисуем, бэк не дергаем!
+                            renderHeaderAvatar(cachedAvatar);
+                        } else {
+                            // Если в памяти пусто, но токен есть — запрашиваем 1 раз с бэка
+                            const jwt = decodeJWT(token);
+                            const userId = jwt?.sub || jwt?.userId || jwt?.id;
+
+                            if (userId) {
+                                const freshUrl = await fetchAvatar(userId);
+                                if (freshUrl) {
+                                    localStorage.setItem('userAvatar', freshUrl); // Сохранили на будущее
+                                    renderHeaderAvatar(freshUrl); // Нарисовали
+                                }
+                            }
+                        }
+                    });
                     const avatarUrl = await fetchAvatar(currentUserId);
                     if (avatarUrl) {
                         artist.profilePictureUrl = avatarUrl; // Подменяем URL для рендера
+
+
                     }
                 }
                 // -----------------------------------
@@ -586,6 +630,16 @@
                 // 3. ЕСЛИ СОХРАНЕНИЕ ПРОШЛО УСПЕШНО — ГРУЗИМ ФАЙЛ
                 await uploadAvatarFile(userId);
 
+                // 2. СРАЗУ ПОСЛЕ ЭТОГО: Получаем новую ссылку, обновляем память и шапку
+                const updatedAvatarUrl = await fetchAvatar(userId);
+                if (updatedAvatarUrl) {
+                    localStorage.setItem('userAvatar', updatedAvatarUrl);
+                    renderHeaderAvatar(updatedAvatarUrl); // Шапка обновится мгновенно
+
+                    // (Опционально) обновляем большую фотку на самой странице профиля
+                    const bigAvatar = document.querySelector('.profile-hero .avatar');
+                    if (bigAvatar) bigAvatar.innerHTML = `<img src="${updatedAvatarUrl}" alt="avatar">`;
+                }
                 artistExists = true;
                 showToast(isNew ? 'Профиль создан! 🎉' : 'Профиль сохранён!', 'success');
                 setTimeout(() => loadArtistProfile(), 600);
@@ -885,33 +939,45 @@
         if (!userId) return null;
 
         try {
-            const headers = {
-                'X-User-Id': userId
-            };
+            const token = getToken(); // Берем твой токен из localStorage
 
-            // Добавляем токен, если пользователь авторизован
-            const token = getToken();
-            if (token) {
-                headers['Authorization'] = `Bearer ${token}`;
-            }
-
-            const res = await fetch(`${API}/artist/avatar`, {
+            const res = await fetch(`${API}/artist/avatar/${userId}`, {
                 method: 'GET',
-                headers: headers
+                headers: {
+                    // Возвращаем токен обратно, чтобы 403 пропала
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
             });
+
             if (res.ok) {
                 const data = await res.json();
-                // ВАЖНО: Убедись, что поле совпадает с твоим AvatarDTO в Java!
-                // Обычно это data.url, data.fileUrl или data.profilePictureUrl
-                const safeUrl = encodeURI(data.avatarUrl);
-                console.log("DEBUG: Полная ссылка на картинку:", safeUrl);
-                return safeUrl
+                // Возвращаем URL, если он есть
+                return data.avatarUrl ? encodeURI(data.avatarUrl) : null;
+            } else {
+                console.error("fetchAvatar вернул ошибку:", res.status);
             }
         } catch (e) {
-            console.error("Не удалось получить аватарку:", e);
+            console.error("fetchAvatar упал:", e);
         }
         return null;
     }
+
+    function updateHeaderAvatar(url) {
+        const slot = document.querySelector('.header-avatar-slot'); // СЛУШАЙ СЮДА: это класс твоего контейнера в хедере
+        if (slot) {
+            if (url) {
+                slot.innerHTML = `<img src="${encodeURI(url)}" style="width:32px; height:32px; border-radius:50%; object-fit:cover;">`;
+            } else {
+                slot.innerHTML = '👤'; // Заглушка, если аватара нет
+            }
+        }
+    }
+
+    // Слушатель событий, чтобы при смене аватарки хедер менялся сам на всех вкладках
+    window.addEventListener('avatarChanged', (e) => {
+        updateHeaderAvatar(e.detail.url);
+    });
 
     document.addEventListener('change', function(e) {
         if (e.target && e.target.id === 'f_avatarInput') {
@@ -926,6 +992,49 @@
                     }
                 }
                 reader.readAsDataURL(file);
+            }
+        }
+    });
+
+    /* ════════════════════════════════
+   GLOBAL AVATAR В МЕНЮ ШАПКИ
+════════════════════════════════ */
+
+    // 1. Функция, которая вставляет картинку в кружок в меню
+    function renderHeaderAvatar(url) {
+        const avatarDiv = document.getElementById('userAvatar');
+        if (!avatarDiv) return; // Если на странице нет меню, ничего не делаем
+
+        if (url) {
+            // Ставим картинку. width: 100% и height: 100% заполнят твой div.user-avatar
+            avatarDiv.innerHTML = `<img src="${url}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+        } else {
+            avatarDiv.innerHTML = '🎤'; // Дефолт, если фотки нет
+        }
+    }
+
+    // 2. Логика, которая запускается при открытии ЛЮБОЙ страницы
+    document.addEventListener('DOMContentLoaded', async () => {
+        const token = getToken();
+        if (!token) return; // Если гость - выходим
+
+        // Ищем аватарку в памяти браузера
+        const cachedAvatar = localStorage.getItem('userAvatar');
+
+        if (cachedAvatar) {
+            // Если нашли — сразу рисуем, бэк не дергаем!
+            renderHeaderAvatar(cachedAvatar);
+        } else {
+            // Если в памяти пусто, но токен есть — запрашиваем 1 раз с бэка
+            const jwt = decodeJWT(token);
+            const userId = jwt?.sub || jwt?.userId || jwt?.id;
+
+            if (userId) {
+                const freshUrl = await fetchAvatar(userId);
+                if (freshUrl) {
+                    localStorage.setItem('userAvatar', freshUrl); // Сохранили на будущее
+                    renderHeaderAvatar(freshUrl); // Нарисовали
+                }
             }
         }
     });

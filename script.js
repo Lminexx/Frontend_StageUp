@@ -45,11 +45,40 @@ function initAuthState() {
     };
 
     // Функция: включаем режим "Пользователь"
-    const setAuthState = (username, role) => {
+    const setAuthState = (username, role, userId) => {
         if (guestBtn) guestBtn.style.display = 'none';
+
         if (userMenu) {
             userMenu.style.display = 'flex';
-            $('userAvatar').textContent = username.charAt(0).toUpperCase();
+
+            const avatarDiv = $('userAvatar');
+            if (avatarDiv) {
+                // ПРОВЕРЯЕМ ФОТКУ В КЭШЕ БРАУЗЕРА
+                const cachedAvatar = localStorage.getItem('userAvatar');
+
+                if (cachedAvatar) {
+                    // Если фотка есть - ставим картинку и убираем фон кружка
+                    avatarDiv.style.background = 'transparent';
+                    avatarDiv.innerHTML = `<img src="${cachedAvatar}" style="width:100%; height:100%; border-radius:50%; object-fit:cover; display:block;">`;
+                } else {
+                    // Если фотки нет - ставим дефолтную букву и возвращаем цветной фон
+                    avatarDiv.style.background = ''; // сброс на дефолтный из CSS
+                    avatarDiv.textContent = username.charAt(0).toUpperCase();
+
+                    // ФОНОВАЯ ПРОВЕРКА: вдруг юзер зашел с нового ПК, и фотки в кэше еще нет?
+                    // Запрашиваем 1 раз с бэкенда. Если есть — сохраняем и сразу рисуем.
+                    if (userId && typeof fetchAvatar === 'function') {
+                        fetchAvatar(userId).then(freshUrl => {
+                            if (freshUrl) {
+                                localStorage.setItem('userAvatar', freshUrl);
+                                avatarDiv.style.background = 'transparent';
+                                avatarDiv.innerHTML = `<img src="${freshUrl}" style="width:100%; height:100%; border-radius:50%; object-fit:cover; display:block;">`;
+                            }
+                        }).catch(e => console.log('Аватар не найден или ошибка:', e));
+                    }
+                }
+            }
+
             const emoji = role === 'ORGANIZER' ? '🎪' : '🎤';
             $('userDisplayName').textContent = `${emoji} ${username}`;
         }
@@ -82,15 +111,21 @@ function initAuthState() {
         return;
     }
 
-    // 4. Всё отлично, показываем аватарку
+    // 4. Всё отлично, собираем данные
     const username = jwt.sub || jwt.username || jwt.name || 'Профиль';
     const role = (jwt.role || jwt.roles?.[0] || '').toUpperCase();
+
+    // Достаем ID пользователя (нужен для фонового запроса аватарки)
+    // Подставь то поле, где у тебя в токене лежит ID (обычно это sub, id или userId)
+    const userId = jwt.userId || jwt.id || jwt.sub;
+
     const orgNav = document.getElementById('orgNavLink'); // Добавь id="orgNavLink" в HTML-ссылку
     if (orgNav) {
         orgNav.style.display = (role === 'ORGANIZER') ? 'inline-block' : 'none';
     }
 
-    setAuthState(username, role);
+    // Передаем userId третьим параметром!
+    setAuthState(username, role, userId);
 }
 
 function handleLogout() {
@@ -770,8 +805,20 @@ async function loadMyEvents(page = 0) {
 
             // 4. Возвращаем HTML карточки
             return `
-                <div class="event-card">
-                    <h3 class="event-title">${escapeHtml(event.title)}</h3>
+                <div class="event-card" style="position: relative;">
+                    
+                    <!-- 💥 НОВОЕ: Меню с тремя точками -->
+                    <div class="card-menu-container">
+                        <button class="btn-dots" onclick="toggleMenu(event, '${event.id}')">⋮</button>
+                        <div id="menu-${event.id}" class="dropdown-menu">
+                            <!-- Ссылка на редактирование теперь здесь -->
+                            <button class="dropdown-item" onclick="window.location.href='edit-event.html#${event.id}'">✏️ Редактировать</button>
+                            <!-- Вызов окна удаления -->
+                            <button class="dropdown-item danger" onclick="openDeleteModal('${event.id}')">🗑️ Удалить</button>
+                        </div>
+                    </div>
+
+                    <h3 class="event-title" style="padding-right: 24px;">${escapeHtml(event.title)}</h3> <!-- padding-right нужен чтобы текст не наехал на три точки -->
 
                     <div class="event-info-row">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -792,10 +839,12 @@ async function loadMyEvents(page = 0) {
                         ${event.requiredGenre ? `<span class="tag">${escapeHtml(event.requiredGenre)}</span>` : ''}
                     </div>
 
-                      <!-- КНОПКИ ОРГАНИЗАТОРА -->
+                    <!-- КНОПКИ ОРГАНИЗАТОРА -->
                     <div class="org-actions" style="margin-top: auto; border-top: 1px solid var(--border); padding-top: 16px; display: flex; gap: 10px;">
-                        <!-- СТАВИМ РЕШЕТКУ ЗДЕСЬ -->
-                        <button class="btn-outline" style="flex: 1;" onclick="location.href='edit-event.html#${event.id}'">Редактировать</button>
+                        
+                        <!-- 💥 ИЗМЕНЕНО: Кнопка Поделиться вместо Редактирования -->
+                        <button class="btn-outline" style="flex: 1; transition: all 0.2s;" onclick="shareEvent('${event.id}', this)">Поделиться</button>
+                        
                         <button class="btn-outline" style="flex: 1;" onclick="location.href='applications.html#${event.id}'">Заявки</button>
                     </div>
                 </div>
@@ -807,6 +856,119 @@ async function loadMyEvents(page = 0) {
         grid.innerHTML = '<p style="color: var(--danger); grid-column: 1 / -1;">Не удалось загрузить мероприятия. Проверьте соединение.</p>';
     }
 }
+
+
+// --- Логика для меню с тремя точками ---
+function toggleMenu(e, eventId) {
+    e.stopPropagation(); // Чтобы клик не закрыл меню моментально
+
+    // Сначала закрываем все открытые меню
+    document.querySelectorAll('.dropdown-menu').forEach(menu => {
+        if (menu.id !== `menu-${eventId}`) menu.classList.remove('active');
+    });
+
+    // Открываем/закрываем нужное
+    const menu = document.getElementById(`menu-${eventId}`);
+    if (menu) {
+        menu.classList.toggle('active');
+    }
+}
+
+// Закрытие меню при клике в любое другое место экрана
+document.addEventListener('click', () => {
+    document.querySelectorAll('.dropdown-menu').forEach(menu => menu.classList.remove('active'));
+});
+
+
+// --- Логика для кнопки "Поделиться" ---
+async function shareEvent(eventId, btnElement) {
+    // Формируем твою ссылку
+    const url = `http://localhost:3000/event-details#${eventId}`;
+
+    try {
+        await navigator.clipboard.writeText(url);
+
+        // Визуальный отклик для пользователя
+        const originalText = btnElement.textContent;
+        btnElement.textContent = 'Скопировано! ✓';
+        btnElement.style.color = '#10b981'; // Зеленый цвет
+        btnElement.style.borderColor = '#10b981';
+
+        // Возвращаем обратно через 2 секунды
+        setTimeout(() => {
+            btnElement.textContent = originalText;
+            btnElement.style.color = '';
+            btnElement.style.borderColor = '';
+        }, 2000);
+
+    } catch (err) {
+        console.error('Ошибка копирования: ', err);
+        alert('Не удалось скопировать ссылку.');
+    }
+}
+
+
+// --- Логика для удаления мероприятия ---
+let eventIdToDelete = null; // Храним ID того, что хотим удалить
+
+function openDeleteModal(eventId) {
+    eventIdToDelete = eventId;
+    const modal = document.getElementById('deleteModal');
+    if (modal) modal.classList.add('active');
+}
+
+function closeDeleteModal() {
+    eventIdToDelete = null;
+    const modal = document.getElementById('deleteModal');
+    if (modal) modal.classList.remove('active');
+}
+
+async function executeDelete() {
+    if (!eventIdToDelete) return;
+
+    const token = localStorage.getItem('token');
+    const jwt = decodeJWT(token);
+
+    // Бэкенд просит X-User-Id. Берем его из JWT (обычно это поле sub или id)
+    const userId = jwt.sub || jwt.id;
+
+    const btn = document.getElementById('confirmDeleteBtn');
+    btn.textContent = 'Удаление...';
+    btn.disabled = true;
+
+    try {
+        const response = await fetch(`http://localhost:8080/api/v1/event/${eventIdToDelete}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'X-User-Id': userId // Обязательный заголовок для твоего Java бэкенда
+            }
+        });
+
+        if (response.ok || response.status === 204) {
+            closeDeleteModal();
+            // Перезагружаем список мероприятий, чтобы карточка исчезла
+            loadMyEvents();
+        } else {
+            const err = await response.json().catch(() => ({}));
+            alert('Ошибка при удалении: ' + (err.message || response.status));
+        }
+    } catch (e) {
+        console.error('Ошибка:', e);
+        alert('Ошибка соединения с сервером');
+    } finally {
+        btn.textContent = 'Да, удалить';
+        btn.disabled = false;
+    }
+}
+
+function showSuccessModal() {
+    const modal = document.getElementById('successModal');
+    if (modal) {
+        modal.classList.add('active'); // Это активирует твой CSS
+    }
+}
+
 
 async function submitCreateEvent() {
     // 1. Собираем сырые значения из инпутов
@@ -859,8 +1021,8 @@ async function submitCreateEvent() {
         });
 
         if (response.ok) {
-            alert('Мероприятие успешно создано!');
-            window.location.href = 'organizer.html'; // Перекидываем в профиль
+            showSuccessModal();
+            // window.location.href = 'organizer.html'; // Перекидываем в профиль
         } else {
             const err = await response.json().catch(() => ({}));
             alert('Ошибка бэкенда: ' + (err.detail || err.message || response.status));
@@ -871,6 +1033,14 @@ async function submitCreateEvent() {
     } finally {
         btn.textContent = 'Опубликовать мероприятие';
         btn.disabled = false;
+    }
+}
+
+
+function showSuccessEditModal() {
+    const modal = document.getElementById('successEditModal');
+    if (modal) {
+        modal.classList.add('active'); // Это активирует твой CSS
     }
 }
 
@@ -985,8 +1155,8 @@ async function submitEditEvent() {
         });
 
         if (response.ok) {
-            alert('Изменения успешно сохранены!');
-            window.location.href = 'organizer.html'; // Возвращаемся в профиль
+            showSuccessEditModal()
+            // window.location.href = 'organizer.html'; // Возвращаемся в профиль
         } else {
             const err = await response.json().catch(() => ({}));
             alert('Ошибка бэкенда: ' + (err.detail || err.message || response.status));
@@ -1155,5 +1325,20 @@ async function loadPublicProfile(targetId) {
         `;
     }
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Достаем ссылку на аватарку, которую мы бережно сохранили в профиле
+    const savedAvatar = localStorage.getItem('userAvatar');
+
+    // Ищем кружок в шапке на Главной странице
+    // Убедись, что у этого синего кружка с буквой 'S' стоит id="userAvatar"
+    const avatarDiv = document.getElementById('userAvatar');
+
+    if (savedAvatar && avatarDiv) {
+        // Если фотка есть в памяти — вставляем её, а синий фон убираем
+        avatarDiv.style.background = 'transparent';
+        avatarDiv.innerHTML = `<img src="${savedAvatar}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block;">`;
+    }
+});
 
 
